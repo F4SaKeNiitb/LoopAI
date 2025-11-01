@@ -59,11 +59,17 @@ export default function ReportPage() {
   const handlePlayAudio = () => {
     if (reportData && reportData.translated_audio_urls[selectedLanguage]) {
       const audioUrl = reportData.translated_audio_urls[selectedLanguage].audio_url;
-      const audio = new Audio(audioUrl);
-      audio.play();
-      setIsPlaying(true);
-      
-      audio.onended = () => setIsPlaying(false);
+      if (audioUrl) {
+        const audio = new Audio(audioUrl);
+        audio.play();
+        setIsPlaying(true);
+        
+        audio.onended = () => setIsPlaying(false);
+        audio.onerror = () => {
+          console.error('Error playing audio:', audioUrl);
+          setIsPlaying(false);
+        };
+      }
     }
   };
 
@@ -231,8 +237,8 @@ export default function ReportPage() {
           </div>
         )}
 
-        {/* Audio Player for Hindi/Marathi */}
-        {(selectedLanguage === 'hi' || selectedLanguage === 'mr') && reportData.translated_audio_urls[selectedLanguage] && (
+        {/* Audio Player for all languages */}
+        {reportData.translated_audio_urls[selectedLanguage] && (
           <div className="bg-gradient-to-r from-blue-50 to-indigo-50 shadow-lg rounded-2xl p-6 mb-8 border border-blue-100">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between">
               <div className="mb-4 sm:mb-0">
@@ -240,7 +246,7 @@ export default function ReportPage() {
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15.536a5 5 0 001.414 1.414m1.414-4.242a5 5 0 010-7.07m-2.828 9.9a9 9 0 010-12.728" />
                   </svg>
-                  Listen to Summary in {selectedLanguage === 'hi' ? 'Hindi' : 'Marathi'}
+                  Listen to Summary in {selectedLanguage === 'hi' ? 'Hindi' : selectedLanguage === 'mr' ? 'Marathi' : 'English'}
                 </h3>
                 <p className="text-sm text-gray-600 mt-1">Click the play button to hear the summary</p>
               </div>
@@ -292,7 +298,7 @@ export default function ReportPage() {
                   ? reportData.translated_audio_urls['hi']?.text || reportData.summary
                   : selectedLanguage === 'mr'
                   ? reportData.translated_audio_urls['mr']?.text || reportData.summary
-                  : reportData.summary
+                  : reportData.translated_audio_urls['en']?.text || reportData.summary
                 }
               </ReactMarkdown>
             </div>

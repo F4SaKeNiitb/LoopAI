@@ -196,7 +196,7 @@ export default function Home() {
                     </p>
                     <div className="mt-4 w-full max-w-xs">
                       {files.map((file, index) => (
-                        <div key={index} className="flex items-center justify-between p-2 bg-white rounded mb-2">
+                        <div key={index} className="flex items-center justify-between p-2 rounded mb-2 text-black">
                           <span className="text-sm truncate flex-1 mr-2">{file.name}</span>
                           <span className="text-xs text-gray-500 mr-2">({(file.size / 1024 / 1024).toFixed(2)}MB)</span>
                           <button

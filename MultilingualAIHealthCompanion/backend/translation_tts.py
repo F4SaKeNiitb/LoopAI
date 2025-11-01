@@ -18,7 +18,8 @@ async def generate_translations_and_tts(summaries: Dict[str, Any], source_langua
     
     # Define the target languages
     target_languages = {
-        "hi": "Hindi",
+        "en": "English",
+        "hi": "Hindi", 
         "mr": "Marathi"
     }
     
@@ -41,6 +42,7 @@ async def generate_translations_and_tts(summaries: Dict[str, Any], source_langua
             }
         else:
             # If the source language is the same as target, use original text
+            # This will now also generate audio for English if it's the source language
             audio_url = await generate_tts_audio(text_to_translate, lang_code)
             translated_content[lang_code] = {
                 "text": text_to_translate,
@@ -135,8 +137,12 @@ async def generate_tts_audio(text: str, language_code: str) -> str:
                 # In a production system, you would do something like:
                 # with open(f"audio_files/{filename}", "wb") as f:
                 #     f.write(response.content)
+                #     f.flush()  # Ensure data is written
                 
-                audio_url = f"http://localhost:8000/audio/{filename}"
+                # For now, return a direct URL from ElevenLabs or use the API response directly
+                # Since we don't have actual files stored locally, return an example URL
+                # that could be handled by a client-side player or return a placeholder
+                audio_url = f"http://example.com/audio/{filename}"
                 logger.info(f"Successfully generated TTS audio for {language_code}")
                 return audio_url
             else:

@@ -2,6 +2,7 @@ import google.generativeai as genai
 from typing import List, Dict, Any
 import os
 import logging
+import re
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -50,39 +51,64 @@ def generate_summaries(parameters: List[Dict[str, Any]]) -> Dict[str, Any]:
             elif value > max_val:
                 is_high = True
         elif isinstance(ref_range, str):
-            # Handle string formats like "12-16", "<120", ">5.0", "70-99", etc.
-            ref_range_clean = ref_range.replace(" ", "")  # Remove spaces
-            
-            if '-' in ref_range_clean:
-                # Format like "12-16" or "70-99"
-                range_parts = ref_range_clean.split('-')
-                if len(range_parts) == 2:
+            # Handle string formats like "12-16", "<120", ">5.0", "70-99", "90-120 mg/dL", etc.
+            # First, remove units if present (anything after the numbers)
+            ref_range_clean = ref_range.strip()
+            # Remove any units by taking only the part before any space that contains numbers
+            # This regex will match patterns like "12-16", "<120", ">5.0", "90-120 mg/dL", etc.
+            import re
+            # Extract just the range part (numbers, -, <, >, .)
+            range_match = re.search(r'^([<>=]?\s*\d+\.?\d*\s*[-]\s*\d+\.?\d*|[<>=]?\s*\d+\.?\d*)', ref_range_clean)
+            if range_match:
+                range_part = range_match.group(1).strip()
+                range_part_clean = range_part.replace(" ", "")
+                
+                if '-' in range_part_clean:
+                    # Format like "12-16" or "70-99"
+                    range_parts = range_part_clean.replace(">", "").replace("<", "").replace("=", "").split('-')
+                    if len(range_parts) == 2:
+                        try:
+                            min_val, max_val = float(range_parts[0]), float(range_parts[1])
+                            if value < min_val:
+                                is_low = True
+                            elif value > max_val:
+                                is_high = True
+                        except ValueError:
+                            # If conversion fails, we can't determine normal/abnormal
+                            logger.warning(f"Could not parse range '{ref_range}' for {field}")
+                elif range_part_clean.startswith('<'):
+                    # Format like "<120" - value should be less than
                     try:
-                        min_val, max_val = float(range_parts[0]), float(range_parts[1])
-                        if value < min_val:
-                            is_low = True
-                        elif value > max_val:
+                        threshold = float(range_part_clean[1:])
+                        if value >= threshold:
                             is_high = True
                     except ValueError:
-                        # If conversion fails, we can't determine normal/abnormal
                         logger.warning(f"Could not parse range '{ref_range}' for {field}")
-            elif ref_range_clean.startswith('<'):
-                # Format like "<120" - value should be less than
-                try:
-                    threshold = float(ref_range_clean[1:])
-                    if value >= threshold:
-                        is_high = True
-                except ValueError:
-                    logger.warning(f"Could not parse range '{ref_range}' for {field}")
-            elif ref_range_clean.startswith('>'):
-                # Format like ">5.0" - value should be greater than  
-                try:
-                    threshold = float(ref_range_clean[1:])
-                    if value <= threshold:
-                        is_low = True
-                except ValueError:
-                    logger.warning(f"Could not parse range '{ref_range}' for {field}")
-            # For other formats (like "See lab reference" or "Normal"), skip comparison
+                elif range_part_clean.startswith('>'):
+                    # Format like ">5.0" - value should be greater than  
+                    try:
+                        threshold = float(range_part_clean[1:])
+                        if value <= threshold:
+                            is_low = True
+                    except ValueError:
+                        logger.warning(f"Could not parse range '{ref_range}' for {field}")
+                elif range_part_clean.startswith('='):
+                    # Format like "=5.0" - value should equal
+                    try:
+                        target_val = float(range_part_clean[1:])
+                        if value != target_val:
+                            is_abnormal = True  # All non-matching values are abnormal
+                    except ValueError:
+                        logger.warning(f"Could not parse range '{ref_range}' for {field}")
+                else:
+                    # Handle case where just a number is provided (e.g., single threshold)
+                    try:
+                        # If there's no comparison operator, it may be a single value threshold
+                        logger.warning(f"Unclear range format '{ref_range}' for {field}, skipping comparison")
+                    except ValueError:
+                        logger.warning(f"Could not parse range '{ref_range}' for {field}")
+            else:
+                logger.warning(f"Could not parse range '{ref_range}' for {field}")
         # For cases where ref_range is not a dict or str, skip comparison
         
         # Determine status text
@@ -180,40 +206,64 @@ def generate_doctor_summary(abnormal_results: List[Dict[str, Any]]) -> str:
             elif value > max_val:
                 direction = "high"
         elif isinstance(ref_range, str):
-            # Handle string formats like "12-16", "<120", ">5.0", etc.
-            ref_range_clean = ref_range.replace(" ", "")  # Remove spaces
-            
-            if '-' in ref_range_clean:
-                # Format like "12-16" or "70-99"
-                range_parts = ref_range_clean.split('-')
-                if len(range_parts) == 2:
+            # Handle string formats like "12-16", "<120", ">5.0", "70-99 mg/dL", etc.
+            # First, remove units if present (anything after the numbers)
+            ref_range_clean = ref_range.strip()
+            # Remove any units by taking only the part before any space that contains numbers
+            import re
+            # Extract just the range part (numbers, -, <, >, .)
+            range_match = re.search(r'^([<>=]?\s*\d+\.?\d*\s*[-]\s*\d+\.?\d*|[<>=]?\s*\d+\.?\d*)', ref_range_clean)
+            if range_match:
+                range_part = range_match.group(1).strip()
+                range_part_clean = range_part.replace(" ", "")
+                
+                if '-' in range_part_clean:
+                    # Format like "12-16" or "70-99"
+                    range_parts = range_part_clean.replace(">", "").replace("<", "").replace("=", "").split('-')
+                    if len(range_parts) == 2:
+                        try:
+                            min_val, max_val = float(range_parts[0]), float(range_parts[1])
+                            if value < min_val:
+                                direction = "low"
+                            elif value > max_val:
+                                direction = "high"
+                        except ValueError:
+                            # If conversion fails, use default "outside normal range"
+                            pass
+                elif range_part_clean.startswith('<'):
+                    # Format like "<120" - value should be less than
                     try:
-                        min_val, max_val = float(range_parts[0]), float(range_parts[1])
-                        if value < min_val:
-                            direction = "low"
-                        elif value > max_val:
+                        threshold = float(range_part_clean[1:])
+                        if value >= threshold:
                             direction = "high"
                     except ValueError:
-                        # If conversion fails, use default "outside normal range"
+                        # If conversion fails, use default
                         pass
-            elif ref_range_clean.startswith('<'):
-                # Format like "<120" - value should be less than
-                try:
-                    threshold = float(ref_range_clean[1:])
-                    if value >= threshold:
-                        direction = "high"
-                except ValueError:
-                    # If conversion fails, use default
-                    pass
-            elif ref_range_clean.startswith('>'):
-                # Format like ">5.0" - value should be greater than
-                try:
-                    threshold = float(ref_range_clean[1:])
-                    if value <= threshold:
-                        direction = "low"
-                except ValueError:
-                    # If conversion fails, use default
-                    pass
+                elif range_part_clean.startswith('>'):
+                    # Format like ">5.0" - value should be greater than
+                    try:
+                        threshold = float(range_part_clean[1:])
+                        if value <= threshold:
+                            direction = "low"
+                    except ValueError:
+                        # If conversion fails, use default
+                        pass
+                elif range_part_clean.startswith('='):
+                    # Format like "=5.0" - value should equal
+                    try:
+                        target_val = float(range_part_clean[1:])
+                        if value != target_val:
+                            direction = "outside normal range"  # Not equal to target
+                    except ValueError:
+                        # If conversion fails, use default
+                        pass
+                else:
+                    # Handle case where just a number is provided
+                    try:
+                        # If there's no comparison operator, it may be a single value threshold
+                        logger.debug(f"Unclear range format '{ref_range}' for {field}")
+                    except ValueError:
+                        pass
             # For other formats, keep default "outside normal range"
         
         summary += f"- {field}: {value} {units} ({direction} vs normal range {ref_range} {units})\n"
