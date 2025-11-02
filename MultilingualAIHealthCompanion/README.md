@@ -7,11 +7,19 @@ A modern web application that processes health reports (lab results, medical doc
 - **OCR and Text Extraction**: Process PDFs, images (JPG, PNG) and raw text
 - **Parameter Extraction**: Identify and extract key health metrics from reports
 - **AI-Powered Summaries**: Generate plain language and doctor-style summaries
+- **RAG Chatbot**: Advanced Retrieval-Augmented Generation chatbot with:
+  - HyDE (Hypothetical Document Embeddings) for improved query matching
+  - Query transformation with multi-query generation and step-back prompting
+  - Hybrid search combining dense and sparse retrieval methods
+  - Cross-encoder re-ranking for better result relevance
+  - Parent-child chunking for improved context retrieval
+  - Medical terminology understanding and translation
 - **Multilingual Support**: English, Hindi, and Marathi
 - **Text-to-Speech**: Audio summaries for Hindi and Marathi
 - **Clinician Review Dashboard**: Admin interface for healthcare professionals
 - **Safety Warnings**: Critical result alerts and disclaimers
 - **Modern UI**: Responsive, mobile-friendly design with intuitive user experience
+- **Citation System**: Transparent source tracking with confidence scores
 
 ## Tech Stack
 
@@ -19,6 +27,7 @@ A modern web application that processes health reports (lab results, medical doc
 - **Framework**: FastAPI (Python)
 - **OCR**: Pytesseract with OpenCV preprocessing
 - **AI Processing**: Google Gemini API for summary generation
+- **RAG System**: Sentence-transformers, FAISS, Transformers, and PyTorch for advanced retrieval-augmented generation
 - **Translation & TTS**: Placeholder for ElevenLabs API
 - **Database**: In-memory storage (can be extended with PostgreSQL/MongoDB)
 
@@ -43,7 +52,7 @@ python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
 
-3. Install dependencies:
+3. Install dependencies (includes RAG-related libraries like sentence-transformers, FAISS, and PyTorch):
 ```bash
 pip install -r requirements.txt
 ```
@@ -101,6 +110,22 @@ The frontend will start at `http://localhost:3000`
 - `GET /admin/report/{job_id}`: Get specific report details
 - `PUT /admin/report/{job_id}`: Update generated summary (authenticated)
 
+### RAG Chatbot Endpoints
+
+- `POST /chat/query`: Query the RAG chatbot with questions about health reports
+  - Request body:
+    ```json
+    {
+      "query": "string",
+      "top_k": 5,
+      "job_ids": ["optional", "list", "of", "report", "ids"]
+    }
+    ```
+  - Returns: Structured response with answer, retrieved chunks, citations, and confidence scores
+
+- `GET /chat/health`: Health check for the RAG chatbot service
+  - Returns: Status information about the RAG system
+
 ## Application Structure
 
 ```
@@ -112,11 +137,17 @@ MultilingualAIHealthCompanion/
 │   ├── lab_data.py             # Lab test definitions and reference ranges
 │   ├── summary_generation.py   # AI-powered summaries
 │   ├── translation_tts.py      # Translation and text-to-speech
+│   ├── rag_chatbot/            # RAG chatbot module
+│   │   ├── rag_service.py      # Main RAG service implementation
+│   │   ├── medical_rag.py      # Medical-specific RAG implementation with advanced techniques
+│   │   ├── advanced_rag_techniques.py # HyDE, query transformation, and other advanced methods
+│   │   └── __init__.py         # Package initialization
 │   └── requirements.txt        # Python dependencies
 └── frontend/
     ├── pages/
     │   ├── index.tsx           # Home page with upload form
-    │   └── report/[jobId].tsx  # Report display page
+    │   ├── report/[jobId].tsx  # Report display page
+    │   └── chat/index.tsx      # RAG chatbot interface
     ├── styles/
     │   └── globals.css         # Global styles
     ├── package.json            # Node.js dependencies
@@ -155,6 +186,19 @@ The frontend has been enhanced with:
 - **Card-based Layouts**: Organized content in visually appealing cards
 - **Color Coding**: Consistent color scheme for different types of information
 
+## RAG Chat Interface
+
+The new chat interface includes specialized features for interacting with health reports:
+
+- **Report Selection Panel**: Users can select specific health reports to query, limiting the search scope to relevant documents
+- **Interactive Chat Interface**: Clean, intuitive messaging interface with timestamps and message differentiation
+- **Citation System**: Each response includes source information and confidence scores for transparency
+- **Example Prompts**: Built-in suggestions to help users ask relevant questions about their health data
+- **Capabilities Display**: Clear indication of the chatbot's capabilities including medical terminology and reference range understanding
+- **Health Information**: Educational panel explaining how the RAG system works and what to expect from responses
+- **Loading Indicators**: Visual feedback during query processing to improve user experience
+- **Error Handling**: Clear error messages when the RAG service is unavailable or other issues occur
+
 ## Lab Data Configuration
 
 The `lab_data.py` file contains mappings for common lab tests with:
@@ -176,6 +220,28 @@ The application supports translation to Hindi and Marathi:
 1. Plain language summary is translated by the backend
 2. Translated text is converted to speech using ElevenLabs API
 3. Frontend provides audio playback controls for supported languages
+
+## RAG Architecture
+
+The application includes an advanced Retrieval-Augmented Generation (RAG) system for interactive querying of health reports with the following features:
+
+### Advanced RAG Techniques
+
+1. **HyDE (Hypothetical Document Embeddings)**: Generates hypothetical answers to user queries to improve semantic matching between natural language questions and medical terminology in reports
+2. **Query Transformation**: Implements multi-query generation, step-back prompting, and query decomposition to better understand user intent and medical concepts
+3. **Hybrid Search**: Combines dense retrieval (semantic similarity using embeddings) with sparse retrieval (traditional keyword matching) for improved result accuracy
+4. **Cross-Encoder Re-ranking**: Uses cross-encoder models to re-rank initial search results for higher precision
+5. **Parent-Child Chunking**: Processes documents using hierarchical chunking to maintain context while enabling granular retrieval
+6. **Medical-Specific Optimizations**: Includes medical terminology synonyms and specialized handling for health data
+
+### Memory Optimization
+
+The RAG system is optimized for resource-constrained environments (such as M1 Mac with 8GB RAM) through:
+- Efficient embedding models (all-MiniLM-L6-v2) for reduced memory footprint
+- CPU-based processing to avoid GPU memory limitations
+- Batch processing of embeddings to manage memory usage
+- Garbage collection strategies to prevent memory leaks
+- Selective loading of components based on availability
 
 ## Safety Features
 

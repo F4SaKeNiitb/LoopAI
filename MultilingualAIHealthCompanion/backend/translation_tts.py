@@ -8,9 +8,14 @@ import uuid
 import wave
 import array
 import math
+import base64
 
 # Set up logging for this module
 logger = logging.getLogger(__name__)
+
+# Define the audio files directory
+AUDIO_DIR = os.path.join(os.path.dirname(__file__), "audio_files")
+os.makedirs(AUDIO_DIR, exist_ok=True)  # Create directory if it doesn't exist
 
 
 async def generate_translations_and_tts(summaries: Dict[str, Any], source_language: str = "en") -> Dict[str, str]:
@@ -148,20 +153,16 @@ async def generate_tts_audio_elevenlabs(text: str, language_code: str) -> str:
             response = await client.post(url, headers=headers, json=payload)
             
             if response.status_code == 200:
-                # In a real system, we would save the audio content to a file
-                # and return a URL to access it. For now, we'll just return a placeholder.
-                # The actual audio content is in response.content
+                # Save the audio content to a file in the audio_files directory
                 filename = f"tts_{uuid.uuid4()}.mp3"
+                audio_path = os.path.join(AUDIO_DIR, filename)
                 
-                # In a production system, you would do something like:
-                # with open(f"audio_files/{filename}", "wb") as f:
-                #     f.write(response.content)
-                #     f.flush()  # Ensure data is written
+                with open(audio_path, "wb") as f:
+                    f.write(response.content)
+                    f.flush()  # Ensure data is written
                 
-                # For now, return a direct URL from ElevenLabs or use the API response directly
-                # Since we don't have actual files stored locally, return an example URL
-                # that could be handled by a client-side player or return a placeholder
-                audio_url = f"http://example.com/audio/{filename}"
+                # Return the path to access the audio file via the API endpoint
+                audio_url = f"/audio/{filename}"
                 logger.info(f"Successfully generated TTS audio via ElevenLabs for {language_code}")
                 return audio_url
             else:
@@ -188,11 +189,19 @@ async def generate_tts_audio_local(text: str, language_code: str) -> str:
     try:
         # Create a simple placeholder audio file since we can't use pyttsx3 in async context
         # This creates a basic WAV file as a placeholder
-        audio_path = create_placeholder_audio(text, language_code)
-        # In a production system, we would serve this file via HTTP
-        # For now, return a placeholder URL
-        audio_id = str(uuid.uuid4())
-        return f"http://example.com/audio/{audio_id}.mp3"
+        temp_audio_path = create_placeholder_audio(text, language_code)
+        
+        # Move the temporary file to the audio_files directory with a proper name
+        filename = f"tts_local_{uuid.uuid4()}.wav"
+        audio_path = os.path.join(AUDIO_DIR, filename)
+        
+        # Move the temporary file to the audio_files directory
+        import shutil
+        shutil.move(temp_audio_path, audio_path)
+        
+        # Return the path to access the audio file via the API endpoint
+        audio_url = f"/audio/{filename}"
+        return audio_url
     except Exception as e:
         logger.error(f"Error during local TTS generation: {str(e)}")
         # Return fallback placeholder if local TTS fails

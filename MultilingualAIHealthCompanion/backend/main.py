@@ -2,7 +2,8 @@ import sys
 import os
 import logging
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List, Union
@@ -69,6 +70,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount audio files directory to serve static audio files
+audio_dir = os.path.join(os.path.dirname(__file__), "audio_files")
+if os.path.exists(audio_dir):
+    app.mount("/audio", StaticFiles(directory=audio_dir), name="audio")
+    logger.info(f"Mounted audio directory: {audio_dir}")
+else:
+    logger.warning(f"Audio directory does not exist: {audio_dir}")
 
 # Store for job results (in production, use a proper database)
 job_store: Dict[str, Dict[str, Any]] = {}

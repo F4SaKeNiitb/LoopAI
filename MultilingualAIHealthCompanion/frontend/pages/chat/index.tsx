@@ -3,6 +3,7 @@ import { useState, useRef, useEffect } from 'react';
 import Head from 'next/head';
 import Link from 'next/link';
 import axios from 'axios';
+import ReactMarkdown from 'react-markdown';
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<{id: string, text: string, sender: 'user' | 'bot', timestamp: Date, citations?: any[]}[]>([]);
@@ -240,7 +241,13 @@ export default function ChatPage() {
                           : 'bg-gray-200 text-gray-800 rounded-bl-none'
                       }`}
                     >
-                      <div className="whitespace-pre-wrap">{message.text}</div>
+                      {message.sender === 'bot' ? (
+                        <div className="prose prose-sm max-w-none">
+                          <ReactMarkdown>{message.text}</ReactMarkdown>
+                        </div>
+                      ) : (
+                        <div className="whitespace-pre-wrap">{message.text}</div>
+                      )}
                       {message.citations && formatCitations(message.citations)}
                       <div className={`text-xs mt-1 ${message.sender === 'user' ? 'text-blue-100' : 'text-gray-500'}`}>
                         {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
