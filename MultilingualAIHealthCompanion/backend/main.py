@@ -11,6 +11,7 @@ import uuid
 from datetime import datetime
 import json
 import os
+from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -24,7 +25,41 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Multilingual AI Health Companion API", version="1.0.0")
+# Track running background tasks to prevent resource leaks
+background_tasks = set()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan event handler for proper startup and shutdown."""
+    logger.info("Starting up application...")
+    # Startup
+    logger.info("Starting RAG service initialization...")
+    initialize_rag()
+    logger.info(f"RAG service initialization completed. Initialized: {rag_chatbot is not None and rag_chatbot.is_initialized()}")
+    yield
+    # Shutdown
+    logger.info("Shutting down application, cleaning up background tasks...")
+    
+    # Wait for background tasks to complete with a timeout
+    if background_tasks:
+        # Create a list of tasks to avoid modifying the set during iteration
+        tasks_to_wait = list(background_tasks)
+        if tasks_to_wait:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*tasks_to_wait, return_exceptions=True),
+                    timeout=10.0  # 10 second timeout
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"Timed out waiting for {len(tasks_to_wait)} background tasks to complete")
+    
+    logger.info("Application shutdown complete")
+
+app = FastAPI(
+    title="Multilingual AI Health Companion API", 
+    version="1.0.0",
+    lifespan=lifespan
+)
 
 # Add CORS middleware to allow requests from frontend
 app.add_middleware(
@@ -319,6 +354,18 @@ async def process_job(job_id: str, text: Optional[str], file_contents: Optional[
         current_task = asyncio.current_task()
         if current_task in background_tasks:
             background_tasks.discard(current_task)
+        
+        # Force garbage collection to free memory
+        import gc
+        gc.collect()
+        
+        # If using PyTorch, clear cache to free GPU memory if it was used
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass  # torch not available
 
 
 async def _generate_final_summary(individual_summaries: List[Dict[str, Any]], all_texts: List[str]) -> Dict[str, Any]:
@@ -493,27 +540,6 @@ async def chat_health():
             "total_documents": 0,
             "total_chunks": 0
         }
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Clean up background tasks on application shutdown."""
-    logger.info("Shutting down application, cleaning up background tasks...")
-    
-    # Wait for background tasks to complete with a timeout
-    if background_tasks:
-        # Create a list of tasks to avoid modifying the set during iteration
-        tasks_to_wait = list(background_tasks)
-        if tasks_to_wait:
-            try:
-                await asyncio.wait_for(
-                    asyncio.gather(*tasks_to_wait, return_exceptions=True),
-                    timeout=5.0  # 5 second timeout
-                )
-            except asyncio.TimeoutError:
-                logger.warning(f"Timed out waiting for {len(tasks_to_wait)} background tasks to complete")
-    
-    logger.info("Application shutdown complete")
 
 
 if __name__ == "__main__":

@@ -60,37 +60,39 @@ class MedicalRAGChatbot:
     
     def _initialize_models(self):
         """
-        Initialize medical domain-specific models for embeddings and reranking
+        Initialize memory-efficient models for embeddings and reranking suitable for M1 Mac 8GB RAM
         """
-        # Use domain-specific medical embedding model
+        # Use smaller, more memory-efficient embedding model with CPU optimization
         try:
-            # Attempt to use a medical-specific model
-            self.dense_retriever = SentenceTransformer('pritamdeka/S-PubMedBert-MS-MARCO')
-            logger.info("Loaded S-PubMedBert-MS-MARCO model for medical embeddings")
-        except Exception:
-            # Fallback to general model if medical-specific not available
-            try:
-                self.dense_retriever = SentenceTransformer('all-MiniLM-L6-v2')
-                logger.info("Loaded all-MiniLM-L6-v2 as fallback model")
-            except Exception as e:
-                logger.error(f"Could not initialize sentence transformer: {e}")
-                self.dense_retriever = None
+            # Use the smallest effective model instead of the large medical-specific one
+            # Force CPU usage to reduce memory consumption on M1 Mac
+            from sentence_transformers import SentenceTransformer
+            import torch
+            
+            # Use CPU for lower memory usage
+            device = 'cpu'
+            
+            self.dense_retriever = SentenceTransformer('all-MiniLM-L6-v2', device=device)
+            logger.info("Loaded all-MiniLM-L6-v2 model for embeddings (memory efficient)")
+        except Exception as e:
+            logger.error(f"Could not initialize sentence transformer: {e}")
+            self.dense_retriever = None
         
-        # For sparse retrieval, use TF-IDF
+        # For sparse retrieval, use TF-IDF with reduced features to save memory
         self.tfidf_vectorizer = TfidfVectorizer(
             analyzer='char_wb',
             ngram_range=(3, 5),
             lowercase=True,
             stop_words=None,
-            max_features=10000
+            max_features=5000  # Reduced from 10000 to save memory
         )
         
-        # For reranking, we'll use a cross-encoder model
+        # For reranking, use the smallest cross-encoder model with CPU optimization
         try:
             from sentence_transformers import CrossEncoder
-            # Using a model trained for re-ranking
-            self.reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
-            logger.info("Loaded cross-encoder model for reranking")
+            # Using the smallest efficient cross-encoder model
+            self.reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2', device='cpu')
+            logger.info("Loaded cross-encoder model for reranking (memory efficient)")
         except Exception as e:
             logger.error(f"Could not initialize cross-encoder: {e}")
             self.reranker = None
@@ -159,23 +161,50 @@ class MedicalRAGChatbot:
         if self.dense_retriever:
             logger.info("Building dense index...")
             chunk_texts = [chunk['text'] for chunk in self.chunks]
-            embeddings = self.dense_retriever.encode(chunk_texts, convert_to_numpy=True, show_progress_bar=False)
             
-            # Normalize embeddings for cosine similarity
-            embeddings = embeddings.astype('float32')
-            faiss.normalize_L2(embeddings)
+            # Process in smaller batches to manage memory
+            batch_size = 32  # Small batch size to manage memory
+            all_embeddings = []
+            
+            for i in range(0, len(chunk_texts), batch_size):
+                batch_texts = chunk_texts[i:i + batch_size]
+                batch_embeddings = self.dense_retriever.encode(batch_texts, convert_to_numpy=True, show_progress_bar=False)
+                
+                # Normalize batch embeddings
+                batch_embeddings = batch_embeddings.astype('float32')
+                faiss.normalize_L2(batch_embeddings)
+                
+                all_embeddings.append(batch_embeddings)
+                
+                # Force garbage collection after each batch
+                import gc
+                gc.collect()
+            
+            # Concatenate all batches
+            embeddings = np.vstack(all_embeddings)
             
             # Create FAISS index
             dimension = embeddings.shape[1]
             self.index = faiss.IndexFlatIP(dimension)  # Inner product (cosine similarity after normalization)
             self.index.add(embeddings)
             logger.info(f"Built dense index with {len(chunk_texts)} chunks")
+            
+            # Explicitly delete large variables to free memory
+            del all_embeddings
+            del embeddings
+            import gc
+            gc.collect()
         
-        # Build sparse index with TF-IDF
+        # Build sparse index with TF-IDF (process in batches if needed)
         logger.info("Building sparse index...")
         chunk_texts = [chunk['text'] for chunk in self.chunks]
         self.tfidf_matrix = self.tfidf_vectorizer.fit_transform(chunk_texts)
         logger.info(f"Built sparse index with {len(chunk_texts)} chunks")
+        
+        # Explicitly delete to free memory
+        del chunk_texts
+        import gc
+        gc.collect()
     
     def _generate_hypothetical_document(self, query: str) -> str:
         """
@@ -312,38 +341,54 @@ class MedicalRAGChatbot:
         dense_results = []
         sparse_results = []
         
-        # Create HyDE generator to improve query representation
-        hyde_gen = HyDEGenerator()
+        try:
+            # Create HyDE generator to improve query representation
+            hyde_gen = HyDEGenerator()
+            
+            # Dense retrieval with HyDE enhancement
+            if self.dense_retriever and self.index:
+                # Use original query
+                query_embedding = self.dense_retriever.encode([query])
+                query_embedding = query_embedding.astype('float32')
+                faiss.normalize_L2(query_embedding)
+                
+                # Generate hypothetical document and use its embedding
+                hypo_doc = hyde_gen.generate_hypothetical_document(query)
+                hypo_embedding = self.dense_retriever.encode([hypo_doc])
+                hypo_embedding = hypo_embedding.astype('float32')
+                faiss.normalize_L2(hypo_embedding)
+                
+                # Combine original query and hypothetical document embeddings
+                combined_embedding = (query_embedding + hypo_embedding) / 2
+                faiss.normalize_L2(combined_embedding)
+                
+                # Search with combined embedding
+                scores, indices = self.index.search(combined_embedding, top_k * 2)  # Get more results for combination
+                dense_results = [(idx, score) for idx, score in zip(indices[0], scores[0]) if idx != -1]
+                
+                # Cleanup embeddings to free memory
+                del query_embedding, hypo_embedding, combined_embedding
+                import gc
+                gc.collect()
+            
+            # Sparse retrieval with TF-IDF
+            if self.tfidf_vectorizer and self.tfidf_matrix is not None:
+                query_vector = self.tfidf_vectorizer.transform([query])
+                similarities = cosine_similarity(query_vector, self.tfidf_matrix).flatten()
+                
+                # Get top results
+                sparse_indices = similarities.argsort()[-(top_k * 2):][::-1]
+                sparse_results = [(idx, similarities[idx]) for idx in sparse_indices]
+                
+                # Cleanup to free memory
+                del query_vector, similarities
+                import gc
+                gc.collect()
         
-        # Dense retrieval with HyDE enhancement
-        if self.dense_retriever and self.index:
-            # Use original query
-            query_embedding = self.dense_retriever.encode([query])
-            query_embedding = query_embedding.astype('float32')
-            faiss.normalize_L2(query_embedding)
-            
-            # Generate hypothetical document and use its embedding
-            hypo_doc = hyde_gen.generate_hypothetical_document(query)
-            hypo_embedding = self.dense_retriever.encode([hypo_doc])
-            hypo_embedding = hypo_embedding.astype('float32')
-            faiss.normalize_L2(hypo_embedding)
-            
-            # Combine original query and hypothetical document embeddings
-            combined_embedding = (query_embedding + hypo_embedding) / 2
-            faiss.normalize_L2(combined_embedding)
-            
-            # Search with combined embedding
-            scores, indices = self.index.search(combined_embedding, top_k * 2)  # Get more results for combination
-            dense_results = [(idx, score) for idx, score in zip(indices[0], scores[0]) if idx != -1]
-        
-        # Sparse retrieval with TF-IDF
-        if self.tfidf_vectorizer and self.tfidf_matrix is not None:
-            query_vector = self.tfidf_vectorizer.transform([query])
-            similarities = cosine_similarity(query_vector, self.tfidf_matrix).flatten()
-            
-            # Get top results
-            sparse_indices = similarities.argsort()[-(top_k * 2):][::-1]
-            sparse_results = [(idx, similarities[idx]) for idx in sparse_indices]
+        finally:
+            # Ensure cleanup of HyDE generator and other temporary objects
+            import gc
+            gc.collect()
         
         # Use HybridSearch class to combine results
         hybrid_search = HybridSearch()
@@ -376,30 +421,40 @@ class MedicalRAGChatbot:
         if len(chunks) == 0:
             return chunks[:top_k]
         
-        # Create cross-encoder reranker
-        cross_encoder_reranker = CrossEncoderReranker()
+        # Limit the number of chunks to rerank to save memory
+        max_rerank_chunks = 20  # Limit to prevent excessive memory usage
+        chunks_to_rerank = chunks[:max_rerank_chunks]
         
-        # Extract texts for reranking
-        chunk_texts = [chunk.text for chunk in chunks]
+        try:
+            # Create cross-encoder reranker
+            cross_encoder_reranker = CrossEncoderReranker()
+            
+            # Extract texts for reranking
+            chunk_texts = [chunk.text for chunk in chunks_to_rerank]
+            
+            # Rerank using cross-encoder
+            reranked_pairs = cross_encoder_reranker.rerank(query, chunk_texts, top_k=len(chunk_texts))
+            
+            # Create new chunk list with reranked scores
+            reranked_chunks = []
+            for text, score in reranked_pairs:
+                # Find the original chunk that matches this text
+                original_chunk = next((chunk for chunk in chunks_to_rerank if chunk.text == text), None)
+                if original_chunk:
+                    new_chunk = RetrievedChunk(
+                        id=original_chunk.id,
+                        text=original_chunk.text,
+                        score=score,
+                        metadata=original_chunk.metadata,
+                        confidence=min(score / 10.0, 1.0),  # Normalize confidence
+                        source_document=original_chunk.source_document
+                    )
+                    reranked_chunks.append(new_chunk)
         
-        # Rerank using cross-encoder
-        reranked_pairs = cross_encoder_reranker.rerank(query, chunk_texts, top_k=len(chunks))
-        
-        # Create new chunk list with reranked scores
-        reranked_chunks = []
-        for text, score in reranked_pairs:
-            # Find the original chunk that matches this text
-            original_chunk = next((chunk for chunk in chunks if chunk.text == text), None)
-            if original_chunk:
-                new_chunk = RetrievedChunk(
-                    id=original_chunk.id,
-                    text=original_chunk.text,
-                    score=score,
-                    metadata=original_chunk.metadata,
-                    confidence=min(score / 10.0, 1.0),  # Normalize confidence
-                    source_document=original_chunk.source_document
-                )
-                reranked_chunks.append(new_chunk)
+        finally:
+            # Cleanup to free memory
+            import gc
+            gc.collect()
         
         # If for some reason we couldn't match all reranked items, return what we have
         return reranked_chunks[:top_k]

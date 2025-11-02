@@ -20,14 +20,15 @@ class HyDEGenerator:
     Generates hypothetical answers to queries before retrieval to improve matching
     """
     
-    def __init__(self, model_name: str = 'pritamdeka/S-PubMedBert-MS-MARCO'):
+    def __init__(self, model_name: str = 'all-MiniLM-L6-v2'):
         self.model_name = model_name
         self.tokenizer = None
         self.model = None
         
         try:
             from sentence_transformers import SentenceTransformer
-            self.sentence_transformer = SentenceTransformer(model_name)
+            # Use CPU for memory efficiency on M1 Mac
+            self.sentence_transformer = SentenceTransformer(model_name, device='cpu')
         except Exception as e:
             logger.warning(f"Could not load {model_name}, using fallback: {e}")
             self.sentence_transformer = None
@@ -234,7 +235,8 @@ class CrossEncoderReranker:
         self.cross_encoder = None
         
         try:
-            self.cross_encoder = CrossEncoder(model_name)
+            # Use CPU for memory efficiency on M1 Mac
+            self.cross_encoder = CrossEncoder(model_name, device='cpu')
             logger.info(f"Loaded cross-encoder model: {model_name}")
         except Exception as e:
             logger.error(f"Could not load cross-encoder model {model_name}: {e}")
