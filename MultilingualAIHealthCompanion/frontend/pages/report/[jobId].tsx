@@ -305,6 +305,27 @@ export default function ReportPage() {
           </div>
         </div>
 
+        {/* Chat with Your Report Section */}
+        <div className="bg-gradient-to-r from-blue-500 to-indigo-600 rounded-2xl p-6 mb-8 text-center text-white">
+          <div className="max-w-2xl mx-auto">
+            <div className="flex items-center justify-center mb-3">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+              </svg>
+              <h3 className="text-xl font-bold">Chat with Your Report</h3>
+            </div>
+            <p className="text-blue-100 mb-4">
+              Ask specific questions about your health report and get detailed answers from our AI assistant.
+            </p>
+            <a 
+              href={`/chat`} 
+              className="inline-block bg-white text-blue-600 font-semibold px-5 py-2 rounded-lg hover:bg-blue-50 transition duration-200 shadow-md"
+            >
+              Open Chat Interface
+            </a>
+          </div>
+        </div>
+
         {/* Always Expanded Sections */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
           {/* For Your Doctor - Always Expanded */}

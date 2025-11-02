@@ -14,6 +14,9 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
+# Add the rag_chatbot module to the path to import it
+sys.path.append(os.path.join(os.path.dirname(__file__), 'rag_chatbot'))
+
 # Set up comprehensive logging
 logging.basicConfig(
     level=logging.INFO,
@@ -34,6 +37,9 @@ app.add_middleware(
 
 # Store for job results (in production, use a proper database)
 job_store: Dict[str, Dict[str, Any]] = {}
+
+# Initialize the RAG chatbot
+rag_chatbot = None
 
 class UploadRequest(BaseModel):
     text: Optional[str] = None
@@ -131,12 +137,59 @@ async def get_report(job_id: str):
             "message": "Processing in progress..."
         }
 
+# Initialize RAG chatbot after dependencies are loaded
+def initialize_rag():
+    global rag_chatbot
+    try:
+        # Try multiple import strategies to ensure the module is found
+        import importlib
+        import sys
+        import os
+        
+        # Ensure the rag_chatbot directory is in the Python path
+        rag_chatbot_path = os.path.join(os.path.dirname(__file__), 'rag_chatbot')
+        if rag_chatbot_path not in sys.path:
+            sys.path.insert(0, rag_chatbot_path)
+        
+        # Import using importlib to ensure module is loaded properly
+        rag_service_module = importlib.import_module('rag_chatbot.rag_service')
+        rag_service = getattr(rag_service_module, 'rag_service')
+        
+        success = rag_service.initialize()
+        if success:
+            rag_chatbot = rag_service  # Use the service instance
+            logger.info("RAG service initialized successfully")
+        else:
+            rag_chatbot = None
+            logger.error("Failed to initialize RAG service")
+    except ImportError as e:
+        logger.error(f"Failed to import RAG service: {e}")
+        logger.error(f"Available modules in rag_chatbot: {os.listdir(os.path.join(os.path.dirname(__file__), 'rag_chatbot'))}")
+        rag_chatbot = None
+    except Exception as e:
+        logger.error(f"Error initializing RAG service: {e}")
+        logger.error(f"Exception details: {str(e)}", exc_info=True)  # Add full traceback
+        rag_chatbot = None
+
+# Initialize the RAG chatbot when the application starts
+logger.info("Starting RAG service initialization...")
+initialize_rag()
+logger.info(f"RAG service initialization completed. Initialized: {rag_chatbot is not None and rag_chatbot.is_initialized()}")
+
+# Track running background tasks to prevent resource leaks
+background_tasks = set()
+
 # Add the current directory to the Python path to ensure modules can be found in background tasks
 async def process_job(job_id: str, text: Optional[str], file_contents: Optional[List[Dict[str, Any]]]):
     """
     Background task to process multiple uploaded files or text.
     Implements the complete processing pipeline with individual analysis and final summary.
     """
+    task = asyncio.current_task()
+    if task:
+        background_tasks.add(task)
+        task.add_done_callback(lambda t: background_tasks.discard(t))
+    
     try:
         logger.info(f"Starting processing job {job_id}")
         job_store[job_id]["status"] = "PROCESSING"
@@ -227,10 +280,45 @@ async def process_job(job_id: str, text: Optional[str], file_contents: Optional[
         job_store[job_id]["status"] = "COMPLETED"
         logger.info(f"Successfully completed job {job_id}")
         
+        # Add the processed report to the RAG system
+        if rag_chatbot:
+            try:
+                # Add the report data to RAG for future queries
+                report_data = {
+                    "job_id": job_id,
+                    "original_texts": all_extracted_texts,
+                    "patient_info": all_patient_info,
+                    "extracted_parameters": all_extracted_parameters,
+                    "individual_summaries": all_individual_summaries,
+                    "summary": final_summary["plain_language"],
+                    "doctor_summary": final_summary["doctor_summary"],
+                    "questions": final_summary["questions"],
+                    "warnings": final_summary["warnings"],
+                    "created_at": job_store[job_id]["created_at"],
+                    "language": job_store[job_id]["language"]
+                }
+                success = rag_chatbot.add_health_report(report_data)
+                if success:
+                    logger.info(f"Added job {job_id} to RAG system")
+                else:
+                    logger.error(f"Failed to add job {job_id} to RAG system")
+            except Exception as e:
+                logger.error(f"Error adding report to RAG system: {e}")
+        
+        # Update the job store with the result
+        job_store[job_id]["result"] = result
+        job_store[job_id]["status"] = "COMPLETED"
+        logger.info(f"Successfully completed job {job_id}")
+        
     except Exception as e:
         job_store[job_id]["status"] = "FAILED"
         job_store[job_id]["error"] = str(e)
         logger.error(f"Error processing job {job_id}: {str(e)}", exc_info=True)  # Include traceback
+    finally:
+        # Clean up task reference when done
+        current_task = asyncio.current_task()
+        if current_task in background_tasks:
+            background_tasks.discard(current_task)
 
 
 async def _generate_final_summary(individual_summaries: List[Dict[str, Any]], all_texts: List[str]) -> Dict[str, Any]:
@@ -362,7 +450,70 @@ async def update_admin_report(job_id: str, updated_summary: Dict[str, Any]):
     return {"message": "Report updated successfully", "job_id": job_id}
 
 
+# RAG Chatbot endpoints
+class ChatRequest(BaseModel):
+    query: str
+    top_k: Optional[int] = 5
+    job_ids: Optional[List[str]] = None  # Optional: only search specific reports
 
+
+@app.post("/chat/query")
+async def chat_query(chat_request: ChatRequest):
+    """
+    Query the RAG chatbot with a question about the health reports
+    """
+    if not rag_chatbot or not rag_chatbot.is_initialized():
+        raise HTTPException(status_code=500, detail="RAG chatbot is not initialized")
+    
+    try:
+        response = await rag_chatbot.answer_query(
+            query=chat_request.query,
+            top_k=chat_request.top_k
+        )
+        
+        return response
+    except Exception as e:
+        logger.error(f"Error in chat query: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
+
+
+@app.get("/chat/health")
+async def chat_health():
+    """
+    Health check for the RAG chatbot
+    """
+    if rag_chatbot and rag_chatbot.is_initialized():
+        status = rag_chatbot.get_health_status()
+        status["status"] = "healthy"
+        return status
+    else:
+        return {
+            "status": "unhealthy",
+            "rag_initialized": False,
+            "total_documents": 0,
+            "total_chunks": 0
+        }
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up background tasks on application shutdown."""
+    logger.info("Shutting down application, cleaning up background tasks...")
+    
+    # Wait for background tasks to complete with a timeout
+    if background_tasks:
+        # Create a list of tasks to avoid modifying the set during iteration
+        tasks_to_wait = list(background_tasks)
+        if tasks_to_wait:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*tasks_to_wait, return_exceptions=True),
+                    timeout=5.0  # 5 second timeout
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"Timed out waiting for {len(tasks_to_wait)} background tasks to complete")
+    
+    logger.info("Application shutdown complete")
 
 
 if __name__ == "__main__":
